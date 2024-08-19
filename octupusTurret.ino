@@ -4,13 +4,13 @@
 #include <Servo.h>
 
 // Network credentials
-const char* ssid = "ocopuss shooter";
-const char* password = "octopuss shooter";
+  char* u = "octopuss shooter";
+  char* p = "12345689";//atleast nine digits
 
 // Pin definitions
-#define trig 7
-#define pig 4
-#define serpin 9
+#define TRIG_PIN 14   // GPIO14 (D5 on some boards)
+#define PIG_PIN 12    // GPIO12 (D6 on some boards)
+#define SERVO_PIN 15   // GPIO9 (D9 on some boards)
 
 Servo yaw;
 
@@ -23,33 +23,29 @@ int range = 90;
 bool checkbox1Checked = false;
 bool checkbox2Checked = false;
 
-void managepins(int range1, boolean checkbox1, boolean checkbox2) {
-    digitalWrite(pig, checkbox2);
-    if (checkbox2 == true) {
-        digitalWrite(trig, checkbox1);
+void managepins(int range1, bool checkbox1, bool checkbox2) {
+    digitalWrite(PIG_PIN, checkbox2 ? HIGH : LOW);
+    if (checkbox2) {
+        digitalWrite(TRIG_PIN, checkbox1 ? HIGH : LOW);
     }
     yaw.write(range1);
 }
 
 void parseMessage(String msg) {
-    // Find and extract the range value
     int rangeIndex = msg.indexOf("range:");
     int rangeEndIndex = msg.indexOf(";", rangeIndex);
     String rangeValue = msg.substring(rangeIndex + 6, rangeEndIndex);
-    range = rangeValue.toInt(); // Convert to integer
+    range = rangeValue.toInt();
 
-    // Find and extract checkbox1 value
     int checkbox1Index = msg.indexOf("checkbox1:");
     int checkbox1EndIndex = msg.indexOf(";", checkbox1Index);
     String checkbox1Value = msg.substring(checkbox1Index + 10, checkbox1EndIndex);
-    checkbox1Checked = (checkbox1Value == "true"); // Convert to boolean
+    checkbox1Checked = (checkbox1Value == "true");
 
-    // Find and extract checkbox2 value
     int checkbox2Index = msg.indexOf("checkbox2:");
     String checkbox2Value = msg.substring(checkbox2Index + 10);
-    checkbox2Checked = (checkbox2Value == "true"); // Convert to boolean
+    checkbox2Checked = (checkbox2Value == "true");
 
-    // Print extracted values
     Serial.print("Range: ");
     Serial.println(range);
     Serial.print("Checkbox1: ");
@@ -148,6 +144,8 @@ void handleRoot() {
 void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
     if (type == WStype_TEXT) {
         String msg = String((char*)payload);
+        Serial.print("Received message: ");
+        Serial.println(msg);
         parseMessage(msg);
         managepins(range, checkbox1Checked, checkbox2Checked);
     }
@@ -155,13 +153,15 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t lengt
 
 void setup() {
     Serial.begin(9600);
-    WiFi.softAP(ssid, password);
-    pinMode(pig, OUTPUT);
-    pinMode(trig, OUTPUT);
-    yaw.attach(serpin);
-    Serial.println("AP IP address: ");
+    WiFi.mode(WIFI_AP); 
+    WiFi.softAP(u, p);
+    Serial.print("AP IP address: ");
     Serial.println(WiFi.softAPIP());
-
+    
+    pinMode(PIG_PIN, OUTPUT);
+    pinMode(TRIG_PIN, OUTPUT);
+    yaw.attach(SERVO_PIN);
+    
     websocket.begin();
     websocket.onEvent(onWebSocketEvent);
 
@@ -170,7 +170,7 @@ void setup() {
 }
 
 void loop() {
-    server.handleClient();  // Handle HTTP requests
-    websocket.loop();       // Handle WebSocket communication
+    server.handleClient();
+    websocket.loop();
 }
 
