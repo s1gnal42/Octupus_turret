@@ -1,28 +1,30 @@
-#include <ESP8266WiFi.h>
+#include <WiFi.h>
 #include <WebSocketsServer.h>
-#include <ESP8266WebServer.h>
-#include <Servo.h>
+#include <ESPAsyncWebServer.h>
+#include <ESP32Servo.h>
+
 
 // Network credentials
-  char* u = "octopuss shooter";
-  char* p = "12345689";//atleast nine digits
+const char* ssid = "octopuss shooter";
+const char* password = "Botsec";
 
 // Pin definitions
-#define TRIG_PIN 14   // GPIO14 (D5 on some boards)
-#define PIG_PIN 12    // GPIO12 (D6 on some boards)
-#define SERVO_PIN 15   // GPIO9 (D9 on some boards)
+#define TRIG_PIN 14   // GPIO14
+#define PIG_PIN 12    // GPIO12
+#define SERVO_PIN 13  // GPIO13
 
 Servo yaw;
 
 // Create WebSocket and HTTP servers
 WebSocketsServer websocket = WebSocketsServer(81);
-ESP8266WebServer server(80);
+AsyncWebServer server(80);
 
 // Global variables to store the parsed values
 int range = 90;
 bool checkbox1Checked = false;
 bool checkbox2Checked = false;
 
+// Function to manage the pins and servo
 void managepins(int range1, bool checkbox1, bool checkbox2) {
     digitalWrite(PIG_PIN, checkbox2 ? HIGH : LOW);
     if (checkbox2) {
@@ -31,29 +33,42 @@ void managepins(int range1, bool checkbox1, bool checkbox2) {
     yaw.write(range1);
 }
 
-void parseMessage(String msg) {
-    int rangeIndex = msg.indexOf("range:");
-    int rangeEndIndex = msg.indexOf(";", rangeIndex);
-    String rangeValue = msg.substring(rangeIndex + 6, rangeEndIndex);
-    range = rangeValue.toInt();
+// Function to parse and process the latest WebSocket message
+void parseMessage(const String& msg) {
+    if (msg.startsWith("range:")) {
+        int rangeIndex = msg.indexOf("range:");
+        int rangeEndIndex = msg.indexOf(";", rangeIndex);
+        if (rangeIndex != -1 && rangeEndIndex != -1) {
+            String rangeValue = msg.substring(rangeIndex + 6, rangeEndIndex);
+            range = rangeValue.toInt();
+            Serial.print("Range: ");
+            Serial.println(range);
+        }
+    } else if (msg.startsWith("checkbox1:") || msg.startsWith("checkbox2:")) {
+        int checkbox1Index = msg.indexOf("checkbox1:");
+        if (checkbox1Index != -1) {
+            int checkbox1EndIndex = msg.indexOf(";", checkbox1Index);
+            if (checkbox1EndIndex != -1) {
+                String checkbox1Value = msg.substring(checkbox1Index + 10, checkbox1EndIndex);
+                checkbox1Checked = (checkbox1Value == "true");
+            }
+        }
 
-    int checkbox1Index = msg.indexOf("checkbox1:");
-    int checkbox1EndIndex = msg.indexOf(";", checkbox1Index);
-    String checkbox1Value = msg.substring(checkbox1Index + 10, checkbox1EndIndex);
-    checkbox1Checked = (checkbox1Value == "true");
-
-    int checkbox2Index = msg.indexOf("checkbox2:");
-    String checkbox2Value = msg.substring(checkbox2Index + 10);
-    checkbox2Checked = (checkbox2Value == "true");
-
-    Serial.print("Range: ");
-    Serial.println(range);
-    Serial.print("Checkbox1: ");
-    Serial.println(checkbox1Checked ? "Checked" : "Unchecked");
-    Serial.print("Checkbox2: ");
-    Serial.println(checkbox2Checked ? "Checked" : "Unchecked");
+        int checkbox2Index = msg.indexOf("checkbox2:");
+        if (checkbox2Index != -1) {
+            String checkbox2Value = msg.substring(checkbox2Index + 10);
+            checkbox2Checked = (checkbox2Value == "true");
+        }
+        
+        Serial.print("Checkbox1: ");
+        Serial.println(checkbox1Checked ? "Checked" : "Unchecked");
+        Serial.print("Checkbox2: ");
+        Serial.println(checkbox2Checked ? "Checked" : "Unchecked");
+        managepins(range, checkbox1Checked, checkbox2Checked);
+    }
 }
 
+// HTML webpage content
 const char* webpage = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -119,49 +134,57 @@ const char* webpage = R"rawliteral(
             console.log('WebSocket connection closed');
         };
 
-        function sendValues() {
+        // Send range value every 50 milliseconds
+        let lastRangeValue = document.getElementById('rangeSlider').value;
+        setInterval(() => {
             const rangeValue = document.getElementById('rangeSlider').value;
+            if (rangeValue !== lastRangeValue) {
+                ws.send(`range:${rangeValue}`);
+                lastRangeValue = rangeValue;
+            }
+        }, 50);
+
+        // Send checkbox values when they change
+        function sendCheckboxValues() {
             const checkbox1Checked = document.getElementById('checkbox1').checked;
             const checkbox2Checked = document.getElementById('checkbox2').checked;
-
-            const message = `range:${rangeValue};checkbox1:${checkbox1Checked};checkbox2:${checkbox2Checked}`;
-            ws.send(message);
+            const checkboxMessage = `checkbox1:${checkbox1Checked};checkbox2:${checkbox2Checked}`;
+            ws.send(checkboxMessage);
         }
 
-        // Add event listeners to call sendValues on any input change
-        document.getElementById('rangeSlider').addEventListener('input', sendValues);
-        document.getElementById('checkbox1').addEventListener('change', sendValues);
-        document.getElementById('checkbox2').addEventListener('change', sendValues);
+        document.getElementById('checkbox1').addEventListener('change', sendCheckboxValues);
+        document.getElementById('checkbox2').addEventListener('change', sendCheckboxValues);
     </script>
 </body>
 </html>
 )rawliteral";
 
-void handleRoot() {
-    server.send(200, "text/html", webpage);
+// Handle root URL
+void handleRoot(AsyncWebServerRequest *request) {
+    request->send(200, "text/html", webpage);
 }
 
+// WebSocket event handler
 void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
     if (type == WStype_TEXT) {
         String msg = String((char*)payload);
         Serial.print("Received message: ");
         Serial.println(msg);
         parseMessage(msg);
-        managepins(range, checkbox1Checked, checkbox2Checked);
     }
 }
 
 void setup() {
     Serial.begin(9600);
-    WiFi.mode(WIFI_AP); 
-    WiFi.softAP(u, p);
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(ssid, password);
     Serial.print("AP IP address: ");
     Serial.println(WiFi.softAPIP());
-    
+
     pinMode(PIG_PIN, OUTPUT);
     pinMode(TRIG_PIN, OUTPUT);
     yaw.attach(SERVO_PIN);
-    
+
     websocket.begin();
     websocket.onEvent(onWebSocketEvent);
 
@@ -170,7 +193,6 @@ void setup() {
 }
 
 void loop() {
-    server.handleClient();
-    websocket.loop();
+    websocket.loop(); // Process WebSocket events
 }
 
